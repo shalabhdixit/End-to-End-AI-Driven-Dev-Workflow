@@ -1,0 +1,114 @@
+name: Integrated AI Demo Quality Gates
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: integrated-ai-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-integrated-ai-workflow:
+    name: Validate integrated AI workflow
+    runs-on: ubuntu-latest
+
+    env:
+      APPLE_PAY_API_KEY: apay_test_demo_key_for_ci_only
+      APPLE_PAY_API_URL: https://api.example.com/v1/payments/apple-pay
+      STRIPE_API_KEY: stripe_demo_key_for_ci_only
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest-cov
+
+      - name: Generate living documentation
+        run: |
+          set -o pipefail
+          mkdir -p reports/logs
+          python tools/generate_demo_docs.py 2>&1 | tee reports/logs/01-generate-docs.log
+
+      - name: Validate integrated quality gates
+        run: |
+          set -o pipefail
+          python tools/validate_quality_gates.py 2>&1 | tee reports/logs/02-quality-gates.log
+
+      - name: Compile Python sources
+        run: |
+          set -o pipefail
+          python -m compileall src tests tools 2>&1 | tee reports/logs/03-compile.log
+
+      - name: Run Apple Pay BDD acceptance suite
+        run: |
+          set -o pipefail
+          python -m pytest tests/payment/test_apple_pay.py -v --tb=short 2>&1 | tee reports/logs/04-bdd-tests.log
+
+      - name: Run coverage quality gate
+        run: |
+          set -o pipefail
+          python -m pytest tests/payment/test_apple_pay.py --cov=src.payment --cov-branch --cov-report=term-missing --cov-fail-under=55 2>&1 | tee reports/logs/05-coverage.log
+
+      - name: Generate HTML execution report
+        if: always()
+        run: |
+          python tools/generate_workflow_report.py \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --branch "${{ github.ref_name }}" \
+            --sha "${{ github.sha }}" \
+            --event "${{ github.event_name }}"
+
+      - name: Publish quality gate summary
+        if: always()
+        run: |
+          if [ -f reports/quality-gates-summary.md ]; then
+            cat reports/quality-gates-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload workflow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrated-ai-quality-gate-evidence
+          path: |
+            README.md
+            docs/generated/integrated-ai-demo-quality-gates.md
+            docs/api/apple-pay-openapi.yaml
+            reports/quality-gates-summary.md
+            reports/quality-gates.json
+            reports/integrated-ai-workflow-report.html
+            reports/logs/*.log
+          if-no-files-found: error
+
+      - name: Commit generated documentation updates
+        if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
+        run: |
+          if git diff --quiet -- README.md docs/generated/integrated-ai-demo-quality-gates.md; then
+            echo "Generated documentation is already committed."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md docs/generated/integrated-ai-demo-quality-gates.md
+          git commit -m "docs: refresh integrated AI demo documentation"
+          git push
