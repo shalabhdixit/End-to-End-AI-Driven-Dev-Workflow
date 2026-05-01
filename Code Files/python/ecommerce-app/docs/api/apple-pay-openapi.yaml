@@ -1,0 +1,133 @@
+openapi: 3.0.3
+info:
+  title: Apple Pay Payment API
+  version: 1.0.0
+  description: Processes Apple Pay wallet payments for e-commerce orders.
+servers:
+  - url: https://api.example.com/v1
+security:
+  - BearerAuth:
+      - payments:write
+paths:
+  /payments/apple-pay:
+    post:
+      operationId: processApplePayPayment
+      summary: Process an Apple Pay payment
+      security:
+        - BearerAuth:
+            - payments:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplePayRequest'
+            examples:
+              success_request:
+                value:
+                  order_id: ord_9f3a2b1c
+                  apple_pay_token: apay_tok_live_abc123xyz789qrst
+                  amount: 149.99
+                  currency: usd
+      responses:
+        '200':
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSuccessResponse'
+        '400':
+          description: Invalid Apple Pay token or request format.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_token:
+                  value:
+                    error_code: INVALID_TOKEN
+                    message: Invalid Apple Pay token
+                    retry_after: null
+        '402':
+          description: Payment declined.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded.
+          headers:
+            Retry-After:
+              description: Number of seconds to wait before retrying.
+              schema:
+                type: integer
+        '500':
+          description: Payment processing failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Apple Pay API temporarily unavailable.
+          headers:
+            Retry-After:
+              description: Number of seconds before retrying.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                upstream_unavailable:
+                  value:
+                    error_code: UPSTREAM_UNAVAILABLE
+                    message: Apple Pay API is temporarily unavailable.
+                    retry_after: 30
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ApplePayRequest:
+      type: object
+      required: [order_id, apple_pay_token, amount, currency]
+      properties:
+        order_id:
+          type: string
+        apple_pay_token:
+          type: string
+          minLength: 20
+          pattern: '^apay_tok_.+'
+        amount:
+          type: number
+          maximum: 10000.00
+          exclusiveMinimum: 0
+        currency:
+          type: string
+          enum: [usd, eur, gbp, cad, aud]
+    PaymentSuccessResponse:
+      type: object
+      required: [payment_id, status, timestamp]
+      properties:
+        payment_id:
+          type: string
+        status:
+          type: string
+          enum: [success]
+        timestamp:
+          type: integer
+    ErrorResponse:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+          enum: [INVALID_TOKEN, INVALID_AMOUNT, INVALID_CURRENCY, MISSING_FIELDS, PAYMENT_DECLINED, RATE_LIMIT_EXCEEDED, PROCESSING_FAILED, UPSTREAM_UNAVAILABLE]
+        message:
+          type: string
+        retry_after:
+          type: integer
+          nullable: true
